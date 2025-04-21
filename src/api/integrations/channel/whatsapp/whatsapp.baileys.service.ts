@@ -3932,10 +3932,36 @@ export class BaileysStartupService extends ChannelStartupService {
     }
 
     try {
-      return await this.client.sendMessage(jid, {
+      const response = await this.client.sendMessage(jid, {
         ...(options as any),
         edit: data.key,
       });
+
+      const originalMessage = await this.prismaRepository.message.findFirst({
+        where: {
+          key: {
+            path: ['id'],
+            equals: data.key.id,
+          },
+        },
+        select: { message: true },
+      });
+
+      const updatedMessage = originalMessage?.message
+        ? { ...(originalMessage.message as object), conversation: data.text }
+        : { conversation: data.text };
+
+      await this.prismaRepository.message.updateMany({
+        where: {
+          key: {
+            path: ['id'],
+            equals: data.key.id,
+          },
+        },
+        data: { message: updatedMessage },
+      });
+
+      return response;
     } catch (error) {
       this.logger.error(error);
       throw new BadRequestException(error.toString());
