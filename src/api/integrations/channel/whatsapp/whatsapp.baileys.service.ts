@@ -1266,7 +1266,7 @@ export class BaileysStartupService extends ChannelStartupService {
               if (msg.status === status[3]) {
                 this.logger.log(`Update not read messages ${received.key.remoteJid}`);
 
-                await this.updateChatUnreadMessages(received.key.remoteJid);
+                await this.updateChatUnreadMessages(received.key.remoteJid, this.instanceId);
               } else if (msg.status === status[4]) {
                 this.logger.log(`Update readed messages ${received.key.remoteJid} - ${msg.messageTimestamp}`);
 
@@ -1550,7 +1550,9 @@ export class BaileysStartupService extends ChannelStartupService {
         }
       }
 
-      await Promise.all(Object.keys(readChatToUpdate).map((remoteJid) => this.updateChatUnreadMessages(remoteJid)));
+      await Promise.all(
+        Object.keys(readChatToUpdate).map((remoteJid) => this.updateChatUnreadMessages(remoteJid, this.instanceId)),
+      );
     },
   };
 
@@ -4432,7 +4434,7 @@ export class BaileysStartupService extends ChannelStartupService {
 
     if (result) {
       if (result.count > 0) {
-        this.updateChatUnreadMessages(remoteJid);
+        this.updateChatUnreadMessages(remoteJid, this.instanceId);
       }
 
       return result.count;
@@ -4441,9 +4443,14 @@ export class BaileysStartupService extends ChannelStartupService {
     return 0;
   }
 
-  private async updateChatUnreadMessages(remoteJid: string): Promise<number> {
+  private async updateChatUnreadMessages(remoteJid: string, instanceId?: string): Promise<number> {
+    const chatWhereClause: { remoteJid: string; instanceId?: string } = { remoteJid };
+    if (instanceId) {
+      chatWhereClause.instanceId = instanceId;
+    }
+
     const [chat, unreadMessages] = await Promise.all([
-      this.prismaRepository.chat.findFirst({ where: { remoteJid } }),
+      this.prismaRepository.chat.findFirst({ where: chatWhereClause }),
       this.prismaRepository.message.count({
         where: {
           AND: [
