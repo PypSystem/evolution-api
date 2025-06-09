@@ -3349,6 +3349,7 @@ export class BaileysStartupService extends ChannelStartupService {
       (jid) => !cachedNumbers.some((cached) => cached.jidOptions.includes(jid)),
     );
 
+    await new Promise((res) => setTimeout(res, 4000));
     const verify = await this.client.onWhatsApp(...filteredNumbers);
     const users: OnWhatsAppDto[] = await Promise.all(
       jids.users.map(async (user) => {
