@@ -2410,7 +2410,7 @@ export class BaileysStartupService extends ChannelStartupService {
     if (!text || text.trim().length === 0) {
       throw new BadRequestException('Text is required');
     }
-
+    console.log('textMessage', new Date().toISOString(), data.number, text);
     return await this.sendMessageWithTyping(
       data.number,
       {
@@ -3349,7 +3349,6 @@ export class BaileysStartupService extends ChannelStartupService {
       (jid) => !cachedNumbers.some((cached) => cached.jidOptions.includes(jid)),
     );
 
-    await new Promise((res) => setTimeout(res, 4000));
     const verify = await this.client.onWhatsApp(...filteredNumbers);
     const users: OnWhatsAppDto[] = await Promise.all(
       jids.users.map(async (user) => {
