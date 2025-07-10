@@ -137,4 +137,6 @@ export const n8nController = new N8nController(n8nService, prismaRepository, waM
 const evoaiService = new EvoaiService(waMonitor, prismaRepository, configService, openaiService);
 export const evoaiController = new EvoaiController(evoaiService, prismaRepository, waMonitor);
 
+export const businessController = new BusinessController(waMonitor);
+
 logger.info('Module - ON');
