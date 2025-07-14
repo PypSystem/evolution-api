@@ -198,7 +198,13 @@ export class ChatRouter extends RouterBroker {
           schema: contactPaginatedValidateSchema,
           ClassRef: Query<Contact>,
           execute: (instance, data) =>
-            chatController.fetchChatsPaginated(instance, data, req.body.page ?? 1, req.body.pageSize ?? 100),
+            chatController.fetchChatsPaginated(
+              instance,
+              data,
+              req.body.page ?? 1,
+              req.body.pageSize ?? 100,
+              req.body.search,
+            ),
         });
 
         res.status(200).json(response);

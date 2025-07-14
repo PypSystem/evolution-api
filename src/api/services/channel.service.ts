@@ -837,7 +837,7 @@ export class ChannelStartupService {
     return [];
   }
 
-  public async fetchChatsPaginated(query: any, page: number = 1, pageSize: number = 100) {
+  public async fetchChatsPaginated(query: any, page: number = 1, pageSize: number = 100, search?: string) {
     const remoteJid = query?.where?.remoteJid
       ? query?.where?.remoteJid.includes('@')
         ? query.where?.remoteJid
@@ -860,8 +860,13 @@ export class ChannelStartupService {
         : Prisma.sql``;
 
     // Calcular offset com base na página e tamanho da página
-    const offset = (page - 1) * pageSize;
-    const limit = pageSize;
+    const offset = search ? 0 : (page - 1) * pageSize; // sem paginação quando buscando
+    const limit = search ? 100 : pageSize;
+
+    const searchFilter = search
+      ? Prisma.sql`AND (lower("Contact"."pushName") LIKE ${'%' + search.toLowerCase() + '%'}
+                     OR "Contact"."remoteJid" ILIKE ${'%' + search + '%'})`
+      : Prisma.sql``;
 
     try {
       const results = await this.prismaRepository.$queryRaw`
@@ -908,6 +913,7 @@ export class ChannelStartupService {
             AND "Message"."instanceId" = ${this.instanceId}
             ${remoteJid ? Prisma.sql`AND "Contact"."remoteJid" = ${remoteJid}` : Prisma.sql``}
             ${timestampFilter}
+            ${searchFilter}
           ORDER BY
             "Contact"."remoteJid",
             "Message"."messageTimestamp" DESC
