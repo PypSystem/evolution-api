@@ -3286,6 +3286,7 @@ export class BaileysStartupService extends ChannelStartupService {
       // 3. Atualiza cada mensagem no banco de dados
       for (const read of data.readMessages) {
         // Atualiza o status da(s) mensagem(ns) correspondente(s)
+        // Inclui mensagens com status null ou DELIVERY_ACK que devem ser marcadas como READ
         const updated = await this.prismaRepository.message.updateMany({
           where: {
             instanceId: this.instance.id,
@@ -3293,25 +3294,17 @@ export class BaileysStartupService extends ChannelStartupService {
               { key: { path: ['remoteJid'], equals: read.remoteJid } },
               { key: { path: ['fromMe'], equals: read.fromMe } },
               { key: { path: ['id'], equals: read.id } },
+              { OR: [{ status: null }, { status: { not: status[4] } }] }, // Só atualiza se não estiver READ
             ],
           },
           data: {
-            status: 'READ', // Ajuste de acordo com sua lógica
+            status: status[4], // READ
           },
         });
 
-        // Se necessário, zerar/decrementar `unreadMessages` de Chat
-        // Exemplo simples: zerar `unreadMessages` para o chat correspondente
+        // Atualiza o contador de unreadMessages corretamente
         if (updated.count > 0) {
-          await this.prismaRepository.chat.updateMany({
-            where: {
-              remoteJid: read.remoteJid,
-              instanceId: this.instance.id,
-            },
-            data: {
-              unreadMessages: 0,
-            },
-          });
+          await this.updateChatUnreadMessages(read.remoteJid, this.instance.id);
         }
       }
 
@@ -4239,6 +4232,7 @@ export class BaileysStartupService extends ChannelStartupService {
           { key: { path: ['remoteJid'], equals: remoteJid } },
           { key: { path: ['fromMe'], equals: false } },
           { messageTimestamp: { lte: timestamp } },
+          { instanceId: this.instanceId },
           { OR: [{ status: null }, { status: status[3] }] },
         ],
       },
@@ -4269,14 +4263,18 @@ export class BaileysStartupService extends ChannelStartupService {
           AND: [
             { key: { path: ['remoteJid'], equals: remoteJid } },
             { key: { path: ['fromMe'], equals: false } },
-            { status: { equals: status[3] } },
+            { OR: [{ status: null }, { status: { equals: status[3] } }] }, // Considera mensagens com status null ou DELIVERY_ACK como não lidas
+            instanceId ? { instanceId } : {},
           ],
         },
       }),
     ]);
 
     if (chat && chat.unreadMessages !== unreadMessages) {
-      await this.prismaRepository.chat.update({ where: { id: chat.id }, data: { unreadMessages } });
+      await this.prismaRepository.chat.update({
+        where: { id: chat.id },
+        data: { unreadMessages },
+      });
     }
 
     return unreadMessages;

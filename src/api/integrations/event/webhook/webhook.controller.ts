@@ -259,7 +259,7 @@ export class WebhookController extends EventController implements EventControlle
           server_url: serverUrl,
         });
 
-        if (attempts === maxRetryAttempts) {
+        if (attempts === maxRetries) {
           throw error;
         }
 
