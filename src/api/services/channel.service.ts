@@ -14,6 +14,7 @@ import { Logger } from '@config/logger.config';
 import { NotFoundException } from '@exceptions';
 import { Contact, Message, Prisma } from '@prisma/client';
 import { createJid } from '@utils/createJid';
+import { status } from '@utils/renderStatus';
 import { WASocket } from 'baileys';
 import { isArray } from 'class-validator';
 import EventEmitter2 from 'eventemitter2';
@@ -924,40 +925,48 @@ export class ChannelStartupService {
     `;
 
       if (results && isArray(results) && results.length > 0) {
-        const mappedResults = results.map((contact) => {
-          const lastMessage = contact.lastMessageId
-            ? {
-                id: contact.lastMessageId,
-                key: contact.lastMessageKey,
-                pushName: contact.lastMessagePushName,
-                participant: contact.lastMessageParticipant,
-                messageType: contact.lastMessageMessageType,
-                message: contact.lastMessageMessage,
-                contextInfo: contact.lastMessageContextInfo,
-                source: contact.lastMessageSource,
-                messageTimestamp: contact.lastMessageMessageTimestamp,
-                instanceId: contact.lastMessageInstanceId,
-                sessionId: contact.lastMessageSessionId,
-                status: contact.lastMessageStatus,
-              }
-            : undefined;
+        const mappedResults = await Promise.all(
+          results.map(async (contact, index) => {
+            if (index < 3) {
+              // Verificar e corrigir se necessário os primeiros chats
+              const correctedUnreadMessages = await this.verifyAndFixUnreadMessages(contact.remoteJid);
+              contact.unreadMessages = correctedUnreadMessages;
+            }
 
-          return {
-            id: contact.id,
-            remoteJid: contact.remoteJid,
-            realRemoteJid: contact.realRemoteJid,
-            pushName: contact.pushName,
-            profilePicUrl: contact.profilePicUrl,
-            updatedAt: contact.updatedAt,
-            windowStart: contact.windowStart,
-            windowExpires: contact.windowExpires,
-            windowActive: contact.windowActive,
-            lastMessage: lastMessage ? this.cleanMessageData(lastMessage) : contact.lastMessage,
-            unreadMessages: contact.unreadMessages,
-            lastMessageDate: contact.lastMessageDate,
-            messageType: contact.lastmessagemessagetype,
-          };
-        });
+            const lastMessage = contact.lastMessageId
+              ? {
+                  id: contact.lastMessageId,
+                  key: contact.lastMessageKey,
+                  pushName: contact.lastMessagePushName,
+                  participant: contact.lastMessageParticipant,
+                  messageType: contact.lastMessageMessageType,
+                  message: contact.lastMessageMessage,
+                  contextInfo: contact.lastMessageContextInfo,
+                  source: contact.lastMessageSource,
+                  messageTimestamp: contact.lastMessageMessageTimestamp,
+                  instanceId: contact.lastMessageInstanceId,
+                  sessionId: contact.lastMessageSessionId,
+                  status: contact.lastMessageStatus,
+                }
+              : undefined;
+
+            return {
+              id: contact.id,
+              remoteJid: contact.remoteJid,
+              realRemoteJid: contact.realRemoteJid,
+              pushName: contact.pushName,
+              profilePicUrl: contact.profilePicUrl,
+              updatedAt: contact.updatedAt,
+              windowStart: contact.windowStart,
+              windowExpires: contact.windowExpires,
+              windowActive: contact.windowActive,
+              lastMessage: lastMessage ? this.cleanMessageData(lastMessage) : contact.lastMessage,
+              unreadMessages: contact.unreadMessages,
+              lastMessageDate: contact.lastMessageDate,
+              messageType: contact.lastmessagemessagetype,
+            };
+          }),
+        );
 
         return mappedResults;
       }
@@ -967,5 +976,34 @@ export class ChannelStartupService {
     }
 
     return [];
+  }
+
+  // Método auxiliar para verificar e corrigir unreadMessages se necessário
+  private async verifyAndFixUnreadMessages(remoteJid: string): Promise<number> {
+    const [chat, actualUnreadCount] = await Promise.all([
+      this.prismaRepository.chat.findFirst({
+        where: { remoteJid, instanceId: this.instanceId },
+      }),
+      this.prismaRepository.message.count({
+        where: {
+          AND: [
+            { key: { path: ['remoteJid'], equals: remoteJid } },
+            { key: { path: ['fromMe'], equals: false } },
+            { status: { equals: status[3] } },
+            { instanceId: this.instanceId },
+          ],
+        },
+      }),
+    ]);
+
+    if (chat && chat.unreadMessages !== actualUnreadCount) {
+      await this.prismaRepository.chat.update({
+        where: { id: chat.id },
+        data: { unreadMessages: actualUnreadCount },
+      });
+      return actualUnreadCount;
+    }
+
+    return chat?.unreadMessages || 0;
   }
 }
