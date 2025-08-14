@@ -2251,6 +2251,39 @@ export class BaileysStartupService extends ChannelStartupService {
 
       this.sendDataWebhook(Events.SEND_MESSAGE, messageRaw);
 
+      // Criar contato quando enviar mensagem (fix para instância SAN)
+      try {
+        this.logger.log(`[${this.instance.name}] Verificando contato para mensagem ENVIADA`);
+        const contact = await this.prismaRepository.contact.findFirst({
+          where: { remoteJid: messageRaw.key.remoteJid, instanceId: this.instanceId },
+        });
+
+        if (!contact) {
+          this.logger.log(`[${this.instance.name}] Criando contato para mensagem ENVIADA: ${messageRaw.key.remoteJid}`);
+          const contactRaw = {
+            remoteJid: messageRaw.key.remoteJid,
+            pushName: messageRaw.pushName || messageRaw.key.remoteJid.split('@')[0],
+            profilePicUrl: null,
+            instanceId: this.instanceId,
+          };
+
+          if (this.configService.get<Database>('DATABASE').SAVE_DATA.CONTACTS) {
+            try {
+              const result = await this.prismaRepository.contact.upsert({
+                where: { remoteJid_instanceId: { remoteJid: contactRaw.remoteJid, instanceId: contactRaw.instanceId } },
+                update: contactRaw,
+                create: contactRaw,
+              });
+              this.logger.log(`[${this.instance.name}] Contato criado para mensagem ENVIADA: ${result.id}`);
+            } catch (error) {
+              this.logger.error(`[${this.instance.name}] ERRO ao criar contato para mensagem ENVIADA: ${error.message}`);
+            }
+          }
+        }
+      } catch (error) {
+        this.logger.error(`[${this.instance.name}] ERRO na verificação de contato para mensagem ENVIADA: ${error.message}`);
+      }
+
       if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED && this.localChatwoot?.enabled && isIntegration) {
         await chatbotController.emit({
           instance: { instanceName: this.instance.name, instanceId: this.instanceId },
