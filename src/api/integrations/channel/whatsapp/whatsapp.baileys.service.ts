@@ -2262,7 +2262,7 @@ export class BaileysStartupService extends ChannelStartupService {
           this.logger.log(`[${this.instance.name}] Criando contato para mensagem ENVIADA: ${messageRaw.key.remoteJid}`);
           const contactRaw = {
             remoteJid: messageRaw.key.remoteJid,
-            pushName: messageRaw.pushName || messageRaw.key.remoteJid.split('@')[0],
+            pushName: messageRaw.key.remoteJid.split('@')[0], // Usar número em vez de "Você"
             profilePicUrl: null,
             instanceId: this.instanceId,
           };
