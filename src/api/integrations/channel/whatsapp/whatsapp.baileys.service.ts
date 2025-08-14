@@ -761,18 +761,32 @@ export class BaileysStartupService extends ChannelStartupService {
   private readonly contactHandle = {
     'contacts.upsert': async (contacts: Contact[]) => {
       try {
+        console.log('=== EVENTO CONTACTS.UPSERT ===');
+        console.log('Instance:', this.instance.name);
+        console.log('Quantidade de contatos recebidos:', contacts.length);
+        
         const contactsRaw: any = contacts.map((contact) => ({
           remoteJid: contact.id,
           pushName: contact?.name || contact?.verifiedName || contact.id.split('@')[0],
           profilePicUrl: null,
           instanceId: this.instanceId,
         }));
+        
+        console.log('Contatos processados:', contactsRaw.map(c => c.remoteJid));
 
         if (contactsRaw.length > 0) {
           this.sendDataWebhook(Events.CONTACTS_UPSERT, contactsRaw);
 
-          if (this.configService.get<Database>('DATABASE').SAVE_DATA.CONTACTS)
-            await this.prismaRepository.contact.createMany({ data: contactsRaw, skipDuplicates: true });
+          if (this.configService.get<Database>('DATABASE').SAVE_DATA.CONTACTS) {
+            try {
+              const result = await this.prismaRepository.contact.createMany({ data: contactsRaw, skipDuplicates: true });
+              console.log('Contatos salvos via contacts.upsert:', result.count);
+            } catch (error) {
+              console.log('ERRO ao salvar contatos via contacts.upsert:', error.message);
+            }
+          } else {
+            console.log('SAVE_DATA.CONTACTS desabilitado - não salvou via contacts.upsert');
+          }
 
           const usersContacts = contactsRaw.filter((c) => c.remoteJid.includes('@s.whatsapp'));
           if (usersContacts) {
@@ -1302,9 +1316,17 @@ export class BaileysStartupService extends ChannelStartupService {
             pushName: messageRaw.pushName,
           });
 
+          // DEBUG: Log para rastrear criação de contatos
+          console.log('=== DEBUG CONTATO ===');
+          console.log('Instance:', this.instance.name);
+          console.log('RemoteJid:', received.key.remoteJid);
+          console.log('InstanceId:', this.instanceId);
+
           const contact = await this.prismaRepository.contact.findFirst({
             where: { remoteJid: received.key.remoteJid, instanceId: this.instanceId },
           });
+
+          console.log('Contato encontrado:', !!contact);
 
           const contactRaw: { remoteJid: string; pushName?: string; profilePicUrl?: string; instanceId: string } = {
             remoteJid: received.key.remoteJid,
@@ -1313,11 +1335,14 @@ export class BaileysStartupService extends ChannelStartupService {
             instanceId: this.instanceId,
           };
 
+          console.log('ContactRaw criado:', JSON.stringify(contactRaw));
+
           if (contactRaw.remoteJid === 'status@broadcast') {
             continue;
           }
 
           if (contact) {
+            console.log('Contato JÁ EXISTE - fazendo UPDATE');
             this.sendDataWebhook(Events.CONTACTS_UPDATE, contactRaw);
 
             if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED && this.localChatwoot?.enabled) {
@@ -1328,24 +1353,42 @@ export class BaileysStartupService extends ChannelStartupService {
               );
             }
 
-            if (this.configService.get<Database>('DATABASE').SAVE_DATA.CONTACTS)
-              await this.prismaRepository.contact.upsert({
-                where: { remoteJid_instanceId: { remoteJid: contactRaw.remoteJid, instanceId: contactRaw.instanceId } },
-                create: contactRaw,
-                update: contactRaw,
-              });
+            if (this.configService.get<Database>('DATABASE').SAVE_DATA.CONTACTS) {
+              try {
+                const updateResult = await this.prismaRepository.contact.upsert({
+                  where: { remoteJid_instanceId: { remoteJid: contactRaw.remoteJid, instanceId: contactRaw.instanceId } },
+                  create: contactRaw,
+                  update: contactRaw,
+                });
+                console.log('Contato ATUALIZADO com sucesso:', updateResult.id);
+              } catch (error) {
+                console.log('ERRO ao ATUALIZAR contato:', error.message);
+              }
+            } else {
+              console.log('SAVE_DATA.CONTACTS desabilitado - não atualizou');
+            }
 
             continue;
           }
 
           this.sendDataWebhook(Events.CONTACTS_UPSERT, contactRaw);
 
-          if (this.configService.get<Database>('DATABASE').SAVE_DATA.CONTACTS)
-            await this.prismaRepository.contact.upsert({
-              where: { remoteJid_instanceId: { remoteJid: contactRaw.remoteJid, instanceId: contactRaw.instanceId } },
-              update: contactRaw,
-              create: contactRaw,
-            });
+          console.log('Tentando criar contato...');
+          if (this.configService.get<Database>('DATABASE').SAVE_DATA.CONTACTS) {
+            try {
+              const result = await this.prismaRepository.contact.upsert({
+                where: { remoteJid_instanceId: { remoteJid: contactRaw.remoteJid, instanceId: contactRaw.instanceId } },
+                update: contactRaw,
+                create: contactRaw,
+              });
+              console.log('Contato criado/atualizado com sucesso:', result.id);
+            } catch (error) {
+              console.log('ERRO ao criar contato:', error.message);
+              console.log('ContactRaw que falhou:', JSON.stringify(contactRaw));
+            }
+          } else {
+            console.log('SAVE_DATA.CONTACTS está desabilitado!');
+          }
 
           if (contactRaw.remoteJid.includes('@s.whatsapp')) {
             await saveOnWhatsappCache([{ remoteJid: contactRaw.remoteJid }]);
