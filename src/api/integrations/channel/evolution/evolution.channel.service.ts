@@ -13,7 +13,7 @@ import { chatbotController } from '@api/server.module';
 import { CacheService } from '@api/services/cache.service';
 import { ChannelStartupService } from '@api/services/channel.service';
 import { Events, wa } from '@api/types/wa.types';
-import { Chatwoot, ConfigService, Openai, S3 } from '@config/env.config';
+import { AudioConverter, Chatwoot, ConfigService, Openai, S3 } from '@config/env.config';
 import { BadRequestException, InternalServerErrorException } from '@exceptions';
 import { createJid } from '@utils/createJid';
 import axios from 'axios';
@@ -323,8 +323,8 @@ export class EvolutionStartupService extends ChannelStartupService {
         messageRaw = {
           key: { fromMe: true, id: messageId, remoteJid: number },
           message: {
-            base64: isBase64(message.media) ? message.media : undefined,
-            mediaUrl: isURL(message.media) ? message.media : undefined,
+            base64: isBase64(message.media) ? message.media : null,
+            mediaUrl: isURL(message.media) ? message.media : null,
             quoted,
           },
           messageType: 'imageMessage',
@@ -337,8 +337,8 @@ export class EvolutionStartupService extends ChannelStartupService {
         messageRaw = {
           key: { fromMe: true, id: messageId, remoteJid: number },
           message: {
-            base64: isBase64(message.media) ? message.media : undefined,
-            mediaUrl: isURL(message.media) ? message.media : undefined,
+            base64: isBase64(message.media) ? message.media : null,
+            mediaUrl: isURL(message.media) ? message.media : null,
             quoted,
           },
           messageType: 'videoMessage',
@@ -351,8 +351,8 @@ export class EvolutionStartupService extends ChannelStartupService {
         messageRaw = {
           key: { fromMe: true, id: messageId, remoteJid: number },
           message: {
-            base64: isBase64(message.media) ? message.media : undefined,
-            mediaUrl: isURL(message.media) ? message.media : undefined,
+            base64: isBase64(message.media) ? message.media : null,
+            mediaUrl: isURL(message.media) ? message.media : null,
             quoted,
           },
           messageType: 'audioMessage',
@@ -372,8 +372,8 @@ export class EvolutionStartupService extends ChannelStartupService {
         messageRaw = {
           key: { fromMe: true, id: messageId, remoteJid: number },
           message: {
-            base64: isBase64(message.media) ? message.media : undefined,
-            mediaUrl: isURL(message.media) ? message.media : undefined,
+            base64: isBase64(message.media) ? message.media : null,
+            mediaUrl: isURL(message.media) ? message.media : null,
             quoted,
           },
           messageType: 'documentMessage',
@@ -449,45 +449,52 @@ export class EvolutionStartupService extends ChannelStartupService {
         }
       }
 
-      const base64 = messageRaw.message.base64;
+      const { base64 } = messageRaw.message;
       delete messageRaw.message.base64;
 
       if (base64 || file || audioFile) {
         if (this.configService.get<S3>('S3').ENABLE) {
           try {
-            const fileBuffer = audioFile?.buffer || file?.buffer;
-            const buffer = base64 ? Buffer.from(base64, 'base64') : fileBuffer;
+            // Verificação adicional para garantir que há conteúdo de mídia real
+            const hasRealMedia = this.hasValidMediaContent(messageRaw);
 
-            let mediaType: string;
-            let mimetype = audioFile?.mimetype || file.mimetype;
+            if (!hasRealMedia) {
+              this.logger.warn('Message detected as media but contains no valid media content');
+            } else {
+              const fileBuffer = audioFile?.buffer || file?.buffer;
+              const buffer = base64 ? Buffer.from(base64, 'base64') : fileBuffer;
 
-            if (messageRaw.messageType === 'documentMessage') {
-              mediaType = 'document';
-              mimetype = !mimetype ? 'application/pdf' : mimetype;
-            } else if (messageRaw.messageType === 'imageMessage') {
-              mediaType = 'image';
-              mimetype = !mimetype ? 'image/png' : mimetype;
-            } else if (messageRaw.messageType === 'audioMessage') {
-              mediaType = 'audio';
-              mimetype = !mimetype ? 'audio/mp4' : mimetype;
-            } else if (messageRaw.messageType === 'videoMessage') {
-              mediaType = 'video';
-              mimetype = !mimetype ? 'video/mp4' : mimetype;
+              let mediaType: string;
+              let mimetype = audioFile?.mimetype || file.mimetype;
+
+              if (messageRaw.messageType === 'documentMessage') {
+                mediaType = 'document';
+                mimetype = !mimetype ? 'application/pdf' : mimetype;
+              } else if (messageRaw.messageType === 'imageMessage') {
+                mediaType = 'image';
+                mimetype = !mimetype ? 'image/png' : mimetype;
+              } else if (messageRaw.messageType === 'audioMessage') {
+                mediaType = 'audio';
+                mimetype = !mimetype ? 'audio/mp4' : mimetype;
+              } else if (messageRaw.messageType === 'videoMessage') {
+                mediaType = 'video';
+                mimetype = !mimetype ? 'video/mp4' : mimetype;
+              }
+
+              const fileName = `${messageRaw.key.id}.${mimetype.split('/')[1]}`;
+
+              const size = buffer.byteLength;
+
+              const fullName = join(`${this.instance.id}`, messageRaw.key.remoteJid, mediaType, fileName);
+
+              await s3Service.uploadFile(fullName, buffer, size, {
+                'Content-Type': mimetype,
+              });
+
+              const mediaUrl = await s3Service.getObjectUrl(fullName);
+
+              messageRaw.message.mediaUrl = mediaUrl;
             }
-
-            const fileName = `${messageRaw.key.id}.${mimetype.split('/')[1]}`;
-
-            const size = buffer.byteLength;
-
-            const fullName = join(`${this.instance.id}`, messageRaw.key.remoteJid, mediaType, fileName);
-
-            await s3Service.uploadFile(fullName, buffer, size, {
-              'Content-Type': mimetype,
-            });
-
-            const mediaUrl = await s3Service.getObjectUrl(fullName);
-
-            messageRaw.message.mediaUrl = mediaUrl;
           } catch (error) {
             this.logger.error(['Error on upload file to minio', error?.message, error?.stack]);
           }
@@ -615,7 +622,8 @@ export class EvolutionStartupService extends ChannelStartupService {
     number = number.replace(/\D/g, '');
     const hash = `${number}-${new Date().getTime()}`;
 
-    if (process.env.API_AUDIO_CONVERTER) {
+    const audioConverterConfig = this.configService.get<AudioConverter>('AUDIO_CONVERTER');
+    if (audioConverterConfig.API_URL) {
       try {
         this.logger.verbose('Using audio converter API');
         const formData = new FormData();
@@ -633,10 +641,10 @@ export class EvolutionStartupService extends ChannelStartupService {
 
         formData.append('format', 'mp4');
 
-        const response = await axios.post(process.env.API_AUDIO_CONVERTER, formData, {
+        const response = await axios.post(audioConverterConfig.API_URL, formData, {
           headers: {
             ...formData.getHeaders(),
-            apikey: process.env.API_AUDIO_CONVERTER_KEY,
+            apikey: audioConverterConfig.API_KEY,
           },
         });
 
