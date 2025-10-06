@@ -9,12 +9,11 @@ import { TypebotService } from '@api/integrations/chatbot/typebot/services/typeb
 import { PrismaRepository, Query } from '@api/repository/repository.service';
 import { eventManager, waMonitor } from '@api/server.module';
 import { Events, wa } from '@api/types/wa.types';
-import { Auth, Chatwoot, ConfigService, HttpServer } from '@config/env.config';
+import { Auth, Chatwoot, ConfigService, HttpServer, Proxy } from '@config/env.config';
 import { Logger } from '@config/logger.config';
 import { NotFoundException } from '@exceptions';
 import { Contact, Message, Prisma } from '@prisma/client';
 import { createJid } from '@utils/createJid';
-import { status } from '@utils/renderStatus';
 import { WASocket } from 'baileys';
 import { isArray } from 'class-validator';
 import EventEmitter2 from 'eventemitter2';
@@ -365,13 +364,14 @@ export class ChannelStartupService {
   public async loadProxy() {
     this.localProxy.enabled = false;
 
-    if (process.env.PROXY_HOST) {
+    const proxyConfig = this.configService.get<Proxy>('PROXY');
+    if (proxyConfig.HOST) {
       this.localProxy.enabled = true;
-      this.localProxy.host = process.env.PROXY_HOST;
-      this.localProxy.port = process.env.PROXY_PORT || '80';
-      this.localProxy.protocol = process.env.PROXY_PROTOCOL || 'http';
-      this.localProxy.username = process.env.PROXY_USERNAME;
-      this.localProxy.password = process.env.PROXY_PASSWORD;
+      this.localProxy.host = proxyConfig.HOST;
+      this.localProxy.port = proxyConfig.PORT || '80';
+      this.localProxy.protocol = proxyConfig.PROTOCOL || 'http';
+      this.localProxy.username = proxyConfig.USERNAME;
+      this.localProxy.password = proxyConfig.PASSWORD;
     }
 
     const data = await this.prismaRepository.proxy.findUnique({
@@ -431,7 +431,7 @@ export class ChannelStartupService {
     return data;
   }
 
-  public async sendDataWebhook<T = any>(event: Events, data: T, local = true, integration?: string[]) {
+  public async sendDataWebhook<T extends object = any>(event: Events, data: T, local = true, integration?: string[]) {
     const serverUrl = this.configService.get<HttpServer>('SERVER').URL;
     const tzoffset = new Date().getTimezoneOffset() * 60000; //offset in milliseconds
     const localISOTime = new Date(Date.now() - tzoffset).toISOString();
@@ -722,6 +722,16 @@ export class ChannelStartupService {
     });
   }
 
+  public async findChatByRemoteJid(remoteJid: string) {
+    if (!remoteJid) return null;
+    return await this.prismaRepository.chat.findFirst({
+      where: {
+        instanceId: this.instanceId,
+        remoteJid: remoteJid,
+      },
+    });
+  }
+
   public async fetchChats(query: any) {
     const remoteJid = query?.where?.remoteJid
       ? query?.where?.remoteJid.includes('@')
@@ -764,22 +774,23 @@ export class ChannelStartupService {
           "Chat"."name" as "pushName",
           "Chat"."createdAt" as "windowStart",
           "Chat"."createdAt" + INTERVAL '24 hours' as "windowExpires",
+          "Chat"."unreadMessages" as "unreadMessages",
           CASE WHEN "Chat"."createdAt" + INTERVAL '24 hours' > NOW() THEN true ELSE false END as "windowActive",
-          "Message"."id" AS lastMessageId,
-          "Message"."key" AS lastMessage_key,
+          "Message"."id" AS "lastMessageId",
+          "Message"."key" AS "lastMessage_key",
           CASE
             WHEN "Message"."key"->>'fromMe' = 'true' THEN 'Você'
             ELSE "Message"."pushName"
-          END AS lastMessagePushName,
-          "Message"."participant" AS lastMessageParticipant,
-          "Message"."messageType" AS lastMessageMessageType,
-          "Message"."message" AS lastMessageMessage,
-          "Message"."contextInfo" AS lastMessageContextInfo,
-          "Message"."source" AS lastMessageSource,
-          "Message"."messageTimestamp" AS lastMessageMessageTimestamp,
-          "Message"."instanceId" AS lastMessageInstanceId,
-          "Message"."sessionId" AS lastMessageSessionId,
-          "Message"."status" AS lastMessageStatus
+          END AS "lastMessagePushName",
+          "Message"."participant" AS "lastMessageParticipant",
+          "Message"."messageType" AS "lastMessageMessageType",
+          "Message"."message" AS "lastMessageMessage",
+          "Message"."contextInfo" AS "lastMessageContextInfo",
+          "Message"."source" AS "lastMessageSource",
+          "Message"."messageTimestamp" AS "lastMessageMessageTimestamp",
+          "Message"."instanceId" AS "lastMessageInstanceId",
+          "Message"."sessionId" AS "lastMessageSessionId",
+          "Message"."status" AS "lastMessageStatus"
         FROM "Message"
         LEFT JOIN "Contact" ON "Contact"."remoteJid" = "Message"."key"->>'remoteJid' AND "Contact"."instanceId" = "Message"."instanceId"
         LEFT JOIN "Chat" ON "Chat"."remoteJid" = "Message"."key"->>'remoteJid' AND "Chat"."instanceId" = "Message"."instanceId"
@@ -796,25 +807,25 @@ export class ChannelStartupService {
 
     if (results && isArray(results) && results.length > 0) {
       const mappedResults = results.map((contact) => {
-        const lastMessage = contact.lastmessageid
+        const lastMessage = contact.lastMessageId
           ? {
-              id: contact.lastmessageid,
-              key: contact.lastmessage_key,
-              pushName: contact.lastmessagepushname,
-              participant: contact.lastmessageparticipant,
-              messageType: contact.lastmessagemessagetype,
-              message: contact.lastmessagemessage,
-              contextInfo: contact.lastmessagecontextinfo,
-              source: contact.lastmessagesource,
-              messageTimestamp: contact.lastmessagemessagetimestamp,
-              instanceId: contact.lastmessageinstanceid,
-              sessionId: contact.lastmessagesessionid,
-              status: contact.lastmessagestatus,
+              id: contact.lastMessageId,
+              key: contact.lastMessage_key,
+              pushName: contact.lastMessagePushName,
+              participant: contact.lastMessageParticipant,
+              messageType: contact.lastMessageMessageType,
+              message: contact.lastMessageMessage,
+              contextInfo: contact.lastMessageContextInfo,
+              source: contact.lastMessageSource,
+              messageTimestamp: contact.lastMessageMessageTimestamp,
+              instanceId: contact.lastMessageInstanceId,
+              sessionId: contact.lastMessageSessionId,
+              status: contact.lastMessageStatus,
             }
           : undefined;
 
         return {
-          id: contact.id,
+          id: contact.contactId || null,
           remoteJid: contact.remoteJid,
           pushName: contact.pushName,
           profilePicUrl: contact.profilePicUrl,
@@ -823,14 +834,10 @@ export class ChannelStartupService {
           windowExpires: contact.windowExpires,
           windowActive: contact.windowActive,
           lastMessage: lastMessage ? this.cleanMessageData(lastMessage) : undefined,
+          unreadCount: contact.unreadMessages,
+          isSaved: !!contact.contactId,
         };
       });
-
-      if (query?.take && query?.skip) {
-        const skip = query.skip || 0;
-        const take = query.take || 20;
-        return mappedResults.slice(skip, skip + take);
-      }
 
       return mappedResults;
     }
@@ -860,14 +867,11 @@ export class ChannelStartupService {
           AND "Message"."messageTimestamp" <= ${Math.floor(new Date(query.where.messageTimestamp.lte).getTime() / 1000)}`
         : Prisma.sql``;
 
-    // Calcular offset com base na página e tamanho da página
-    const offset = search ? 0 : (page - 1) * pageSize; // sem paginação quando buscando
-    const limit = search ? 100 : pageSize;
+    const searchFilter = search ? Prisma.sql`AND "Contact"."pushName" ILIKE ${`%${search}%`}` : Prisma.sql``;
 
-    const searchFilter = search
-      ? Prisma.sql`AND (lower("Contact"."pushName") LIKE ${'%' + search.toLowerCase() + '%'}
-                     OR "Contact"."remoteJid" ILIKE ${'%' + search + '%'})`
-      : Prisma.sql``;
+    // Calcular offset com base na página e tamanho da página
+    const offset = (page - 1) * pageSize;
+    const limit = pageSize;
 
     try {
       const results = await this.prismaRepository.$queryRaw`
@@ -925,48 +929,40 @@ export class ChannelStartupService {
     `;
 
       if (results && isArray(results) && results.length > 0) {
-        const mappedResults = await Promise.all(
-          results.map(async (contact, index) => {
-            if (index < 3) {
-              // Verificar e corrigir se necessário os primeiros chats
-              const correctedUnreadMessages = await this.verifyAndFixUnreadMessages(contact.remoteJid);
-              contact.unreadMessages = correctedUnreadMessages;
-            }
+        const mappedResults = results.map((contact) => {
+          const lastMessage = contact.lastMessageId
+            ? {
+                id: contact.lastMessageId,
+                key: contact.lastMessage_key,
+                pushName: contact.lastMessagePushName,
+                participant: contact.lastMessageParticipant,
+                messageType: contact.lastMessageMessageType,
+                message: contact.lastMessageMessage,
+                contextInfo: contact.lastMessageContextInfo,
+                source: contact.lastMessageSource,
+                messageTimestamp: contact.lastMessageMessageTimestamp,
+                instanceId: contact.lastMessageInstanceId,
+                sessionId: contact.lastMessageSessionId,
+                status: contact.lastMessageStatus,
+              }
+            : undefined;
 
-            const lastMessage = contact.lastMessageId
-              ? {
-                  id: contact.lastMessageId,
-                  key: contact.lastMessageKey,
-                  pushName: contact.lastMessagePushName,
-                  participant: contact.lastMessageParticipant,
-                  messageType: contact.lastMessageMessageType,
-                  message: contact.lastMessageMessage,
-                  contextInfo: contact.lastMessageContextInfo,
-                  source: contact.lastMessageSource,
-                  messageTimestamp: contact.lastMessageMessageTimestamp,
-                  instanceId: contact.lastMessageInstanceId,
-                  sessionId: contact.lastMessageSessionId,
-                  status: contact.lastMessageStatus,
-                }
-              : undefined;
-
-            return {
-              id: contact.id,
-              remoteJid: contact.remoteJid,
-              realRemoteJid: contact.realRemoteJid,
-              pushName: contact.pushName,
-              profilePicUrl: contact.profilePicUrl,
-              updatedAt: contact.updatedAt,
-              windowStart: contact.windowStart,
-              windowExpires: contact.windowExpires,
-              windowActive: contact.windowActive,
-              lastMessage: lastMessage ? this.cleanMessageData(lastMessage) : contact.lastMessage,
-              unreadMessages: contact.unreadMessages,
-              lastMessageDate: contact.lastMessageDate,
-              messageType: contact.lastmessagemessagetype,
-            };
-          }),
-        );
+          return {
+            id: contact.id,
+            remoteJid: contact.remoteJid,
+            realRemoteJid: contact.realRemoteJid,
+            pushName: contact.pushName,
+            profilePicUrl: contact.profilePicUrl,
+            updatedAt: contact.updatedAt,
+            windowStart: contact.windowStart,
+            windowExpires: contact.windowExpires,
+            windowActive: contact.windowActive,
+            lastMessage: lastMessage ? this.cleanMessageData(lastMessage) : contact.lastMessage,
+            unreadMessages: contact.unreadMessages,
+            lastMessageDate: contact.lastMessageDate,
+            messageType: contact.lastMessageMessageType,
+          };
+        });
 
         return mappedResults;
       }
@@ -978,32 +974,27 @@ export class ChannelStartupService {
     return [];
   }
 
-  // Método auxiliar para verificar e corrigir unreadMessages se necessário
-  private async verifyAndFixUnreadMessages(remoteJid: string): Promise<number> {
-    const [chat, actualUnreadCount] = await Promise.all([
-      this.prismaRepository.chat.findFirst({
-        where: { remoteJid, instanceId: this.instanceId },
-      }),
-      this.prismaRepository.message.count({
-        where: {
-          AND: [
-            { key: { path: ['remoteJid'], equals: remoteJid } },
-            { key: { path: ['fromMe'], equals: false } },
-            { status: { equals: status[3] } },
-            { instanceId: this.instanceId },
-          ],
-        },
-      }),
-    ]);
+  public hasValidMediaContent(message: any): boolean {
+    if (!message?.message) return false;
 
-    if (chat && chat.unreadMessages !== actualUnreadCount) {
-      await this.prismaRepository.chat.update({
-        where: { id: chat.id },
-        data: { unreadMessages: actualUnreadCount },
-      });
-      return actualUnreadCount;
+    const msg = message.message;
+
+    // Se só tem messageContextInfo, não é mídia válida
+    if (Object.keys(msg).length === 1 && 'messageContextInfo' in msg) {
+      return false;
     }
 
-    return chat?.unreadMessages || 0;
+    // Verifica se tem pelo menos um tipo de mídia válido
+    const mediaTypes = [
+      'imageMessage',
+      'videoMessage',
+      'stickerMessage',
+      'documentMessage',
+      'documentWithCaptionMessage',
+      'ptvMessage',
+      'audioMessage',
+    ];
+
+    return mediaTypes.some((type) => msg[type] && Object.keys(msg[type]).length > 0);
   }
 }
