@@ -3308,7 +3308,40 @@ export class BaileysStartupService extends ChannelStartupService {
       );
       console.log('filteredNumbers', filteredNumbers);
 
-      const verify = await this.client.onWhatsApp(...filteredNumbers);
+      // Gera variações de números brasileiros para testar todas as possibilidades
+      const numbersWithVariations: string[] = [];
+      filteredNumbers.forEach((num) => {
+        const cleanNum = num.replace('@s.whatsapp.net', '');
+
+        // Se for número brasileiro, adiciona variações
+        if (cleanNum.startsWith('55')) {
+          if (cleanNum.length === 14) {
+            // 14 dígitos com 9 duplicado: tenta remover cada 9
+            numbersWithVariations.push(num); // original
+            numbersWithVariations.push(cleanNum.slice(0, 4) + cleanNum.slice(5)); // remove primeiro 9
+            numbersWithVariations.push(cleanNum.slice(0, 5) + cleanNum.slice(6)); // remove segundo 9
+          } else if (cleanNum.length === 13) {
+            // 13 dígitos: tenta com e sem o 9
+            numbersWithVariations.push(num); // com 9
+            numbersWithVariations.push(cleanNum.slice(0, 4) + cleanNum.slice(5)); // sem 9
+          } else if (cleanNum.length === 12) {
+            // 12 dígitos: tenta com e sem o 9
+            numbersWithVariations.push(num); // sem 9
+            numbersWithVariations.push(`${cleanNum.slice(0, 4)}9${cleanNum.slice(4)}`); // com 9
+          } else {
+            numbersWithVariations.push(num);
+          }
+        } else {
+          // Não é brasileiro, mantém original
+          numbersWithVariations.push(num);
+        }
+      });
+
+      // Remove duplicatas
+      const uniqueNumbers = [...new Set(numbersWithVariations)];
+      console.log('numbersWithVariations', uniqueNumbers);
+
+      const verify = await this.client.onWhatsApp(...uniqueNumbers);
       console.log('verify', verify);
       normalVerifiedUsers = await Promise.all(
         normalUsers.map(async (user) => {
@@ -3327,16 +3360,39 @@ export class BaileysStartupService extends ChannelStartupService {
 
           // Brazilian numbers
           if (user.number.startsWith('55')) {
-            const numberWithDigit =
-              user.number.slice(4, 5) === '9' && user.number.length === 13
-                ? user.number
-                : `${user.number.slice(0, 4)}9${user.number.slice(4)}`;
-            const numberWithoutDigit =
-              user.number.length === 12 ? user.number : user.number.slice(0, 4) + user.number.slice(5);
+            // Remove @s.whatsapp.net se existir para trabalhar apenas com números
+            const cleanNumber = user.jid.replace('@s.whatsapp.net', '').replace('+', '');
 
-            numberVerified = verify.find(
-              (v) => v.jid === `${numberWithDigit}@s.whatsapp.net` || v.jid === `${numberWithoutDigit}@s.whatsapp.net`,
-            );
+            // Gera todas as variações possíveis do número
+            const variations: string[] = [];
+
+            // Caso 1: Número com 14 dígitos (55 + 88 + 99 + 6894405) - com 9 duplicado
+            if (cleanNumber.length === 14) {
+              // Remove o primeiro 9 duplicado: 5588996894405 -> 558896894405
+              variations.push(cleanNumber.slice(0, 4) + cleanNumber.slice(5));
+              // Remove o segundo 9 duplicado: 5588996894405 -> 558896894405
+              variations.push(cleanNumber.slice(0, 5) + cleanNumber.slice(6));
+              // Mantém original
+              variations.push(cleanNumber);
+            }
+
+            // Caso 2: Número com 13 dígitos (correto: 55 + 88 + 9 + 96894405)
+            if (cleanNumber.length === 13) {
+              variations.push(cleanNumber); // Com o 9
+              variations.push(cleanNumber.slice(0, 4) + cleanNumber.slice(5)); // Sem o 9 (12 dígitos)
+            }
+
+            // Caso 3: Número com 12 dígitos (sem o 9: 55 + 88 + 96894405)
+            if (cleanNumber.length === 12) {
+              variations.push(cleanNumber); // Sem o 9
+              variations.push(`${cleanNumber.slice(0, 4)}9${cleanNumber.slice(4)}`); // Com o 9 (13 dígitos)
+            }
+
+            // Remove duplicatas e adiciona @s.whatsapp.net
+            const uniqueVariations = [...new Set(variations)].map((v) => `${v}@s.whatsapp.net`);
+
+            // Procura por qualquer variação que exista
+            numberVerified = verify.find((v) => uniqueVariations.includes(v.jid));
           }
 
           // Mexican/Argentina numbers
