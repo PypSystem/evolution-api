@@ -535,6 +535,11 @@ export class ChannelStartupService {
 
     const cleanedMessage = { ...message };
 
+    // Defensive check: garante que message existe antes de acessar propriedades
+    if (!cleanedMessage.message) {
+      return cleanedMessage;
+    }
+
     const mediaUrl = cleanedMessage.message.mediaUrl;
 
     delete cleanedMessage.message.base64;
@@ -583,7 +588,10 @@ export class ChannelStartupService {
       }
     }
 
-    if (mediaUrl) cleanedMessage.message.mediaUrl = mediaUrl;
+    // Restaurar mediaUrl apenas se message ainda existir
+    if (mediaUrl && cleanedMessage.message) {
+      cleanedMessage.message.mediaUrl = mediaUrl;
+    }
 
     return cleanedMessage;
   }
