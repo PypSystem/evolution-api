@@ -68,6 +68,7 @@ services:
     networks:
       - evolution-net
       - dokploy-network
+      - ai-curation-network
     expose:
       - "5432"
 

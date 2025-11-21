@@ -1,0 +1,85 @@
+# ============================================
+# Docker Compose - PRODUÇÃO
+# ============================================
+# Uso: docker-compose -f docker-compose.prod.yml up -d --build
+#
+# Nota: PostgreSQL e Redis estão no HOST do servidor
+#       A Evolution API roda em container Docker
+#       Mesma rede que ai-curation-api e ai-curation-web
+# ============================================
+
+version: '3.8'
+
+services:
+  # ==========================================
+  # Evolution API - Produção
+  # ==========================================
+  evolution-api:
+    container_name: evolution-api
+    image: evolution-api:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: final
+    ports:
+      - '8080:8080'
+    volumes:
+      # Volume para arquivos de instâncias do WhatsApp
+      - evolution_instances:/evolution/instances
+      # Volume para arquivos públicos (QR codes, uploads)
+      - evolution_public:/evolution/public
+    env_file:
+      - .env
+    networks:
+      - ai-curation-network
+
+    # PostgreSQL e Redis estão no host
+    # host-gateway funciona tanto no macOS quanto no Linux
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+
+    restart: always
+
+    # Health check
+    healthcheck:
+      test: ['CMD-SHELL', 'wget --no-verbose --tries=1 --spider http://localhost:8080 || exit 1']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    # Limites de recursos
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+
+    # Logging
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+# ==========================================
+# Networks
+# ==========================================
+networks:
+  ai-curation-network:
+    external: true
+    name: ai-curation-network
+
+# ==========================================
+# Volumes - Persistência de Dados
+# ==========================================
+volumes:
+  evolution_instances:
+    driver: local
+    # Dados de instâncias do WhatsApp (sessions, store)
+  evolution_public:
+    driver: local
+    # Dados públicos (QR codes, uploads)

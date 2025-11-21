@@ -1,0 +1,64 @@
+# ============================================
+# .gitignore para Evolution API com Docker
+# ============================================
+# Adicione este conteúdo ao seu .gitignore existente
+
+# Environment files
+.env
+.env.production
+.env.local
+.env.*.local
+
+# Docker
+docker-compose.override.yml
+.docker/
+
+# Volumes (dados locais)
+instances/
+public/
+store/
+
+# Backups
+*.sql
+*.tar.gz
+*.backup
+
+# PM2 (não mais necessário com Docker)
+.pm2/
+pm2.config.js
+ecosystem.config.js
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Node
+node_modules/
+dist/
+build/
+.npm
+.yarn
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Prisma
+prisma/migrations/
+!prisma/postgresql-migrations/
+!prisma/mysql-migrations/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
