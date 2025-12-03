@@ -489,6 +489,36 @@ export class ChannelStartupService {
     }
   }
 
+  /**
+   * Retorna a variação do número brasileiro com/sem o dígito 9.
+   * Números BR de celular podem vir com ou sem o 9 após o DDD.
+   * Ex: 5548999999999 <-> 554899999999
+   */
+  private getDigit9Variation(remoteJid: string): string | null {
+    const phone = remoteJid.replace('@s.whatsapp.net', '').replace('@g.us', '');
+
+    // Ignora grupos
+    if (remoteJid.endsWith('@g.us')) {
+      return null;
+    }
+
+    // Número com 13 dígitos (com o 9): remove o 9
+    // Formato: 55 + DDD(2) + 9 + número(8) = 13 dígitos
+    if (phone.length === 13 && phone.startsWith('55') && phone.charAt(4) === '9') {
+      const withoutNine = phone.substring(0, 4) + phone.substring(5);
+      return withoutNine + '@s.whatsapp.net';
+    }
+
+    // Número com 12 dígitos (sem o 9): adiciona o 9
+    // Formato: 55 + DDD(2) + número(8) = 12 dígitos
+    if (phone.length === 12 && phone.startsWith('55')) {
+      const withNine = phone.substring(0, 4) + '9' + phone.substring(4);
+      return withNine + '@s.whatsapp.net';
+    }
+
+    return null;
+  }
+
   public async fetchContacts(query: Query<Contact>) {
     const { remoteJid, id } = query?.where || {};
 
@@ -497,7 +527,15 @@ export class ChannelStartupService {
     };
 
     if (remoteJid) {
-      where['remoteJid'] = remoteJid.includes('@') ? remoteJid : createJid(remoteJid);
+      const jid = remoteJid.includes('@') ? remoteJid : createJid(remoteJid);
+      const variation = this.getDigit9Variation(jid);
+
+      if (variation) {
+        // Busca com OR para cobrir ambos formatos (com e sem dígito 9)
+        where['OR'] = [{ remoteJid: jid }, { remoteJid: variation }];
+      } else {
+        where['remoteJid'] = jid;
+      }
     }
 
     if (id) {
