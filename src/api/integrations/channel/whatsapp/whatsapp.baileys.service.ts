@@ -737,6 +737,7 @@ export class BaileysStartupService extends ChannelStartupService {
 
       const chatsToInsert = chats
         .filter((chat) => !existingChatIdSet?.has(chat.id))
+        .filter((chat) => !chat.id.includes('@lid')) // ✅ CORREÇÃO @LID: Não salvar chats com @lid
         .map((chat) => ({
           remoteJid: chat.id,
           instanceId: this.instanceId,
@@ -786,12 +787,27 @@ export class BaileysStartupService extends ChannelStartupService {
   private readonly contactHandle = {
     'contacts.upsert': async (contacts: Contact[]) => {
       try {
-        const contactsRaw: any = contacts.map((contact) => ({
-          remoteJid: contact.id,
-          pushName: contact?.name || contact?.verifiedName || contact.id.split('@')[0],
-          profilePicUrl: null,
-          instanceId: this.instanceId,
-        }));
+        const contactsRaw: any = contacts
+          .map((contact) => {
+            // ✅ CORREÇÃO @LID: Não salvar contatos com @lid
+            // Se o contact.id tem @lid, ele deve ter um número real em outro campo
+            // Mas o Baileys Contact não fornece alternativa, então pulamos @lid
+            const remoteJid = contact.id;
+
+            // Se é @lid, não salvar este contato (será criado quando vier mensagem com remoteJidAlt)
+            if (remoteJid.includes('@lid')) {
+              this.logger.verbose(`[LID-SKIP] Pulando contato com @lid: ${remoteJid}`);
+              return null;
+            }
+
+            return {
+              remoteJid,
+              pushName: contact?.name || contact?.verifiedName || contact.id.split('@')[0],
+              profilePicUrl: null,
+              instanceId: this.instanceId,
+            };
+          })
+          .filter(Boolean); // Remove nulls
 
         if (contactsRaw.length > 0) {
           this.sendDataWebhook(Events.CONTACTS_UPSERT, contactsRaw);
@@ -959,6 +975,12 @@ export class BaileysStartupService extends ChannelStartupService {
 
         for (const chat of chats) {
           if (chatsRepository?.has(chat.id)) {
+            continue;
+          }
+
+          // ✅ CORREÇÃO @LID: Não salvar chats com @lid
+          if (chat.id.includes('@lid')) {
+            this.logger.verbose(`[LID-SKIP] Pulando chat histórico com @lid: ${chat.id}`);
             continue;
           }
 
@@ -4510,8 +4532,33 @@ export class BaileysStartupService extends ChannelStartupService {
     const contentType = getContentType(message.message);
     const contentMsg = message?.message[contentType] as any;
 
+    // ✅ CORREÇÃO @LID: Converter remoteJid se tiver @lid
+    const key = { ...message.key } as ExtendedIMessageKey;
+    const isGroup = key.remoteJid?.endsWith('@g.us');
+    const isLid = key.remoteJid?.includes('@lid');
+
+    if (!isGroup && isLid) {
+      // Para 1:1 com @lid, usar remoteJidAlt
+      if (key.remoteJidAlt) {
+        this.logger.verbose(`[LID-CONVERT] Mensagem: ${key.remoteJid} → ${key.remoteJidAlt}`);
+        key.remoteJid = key.remoteJidAlt;
+        delete key.remoteJidAlt; // Limpar campo alternativo
+      } else {
+        this.logger.warn(`[LID-WARNING] Mensagem ${key.id} tem @lid mas sem remoteJidAlt!`);
+      }
+    }
+
+    // Para grupos, verificar participant
+    if (isGroup && key.participant?.includes('@lid')) {
+      if (key.participantAlt) {
+        this.logger.verbose(`[LID-CONVERT] Participant: ${key.participant} → ${key.participantAlt}`);
+        key.participant = key.participantAlt;
+        delete key.participantAlt;
+      }
+    }
+
     const messageRaw = {
-      key: message.key, // Save key exactly as it comes from Baileys
+      key, // Save key com remoteJid convertido
       pushName:
         message.pushName ||
         (message.key.fromMe
