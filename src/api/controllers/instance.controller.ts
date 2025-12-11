@@ -352,10 +352,13 @@ export class InstanceController {
         throw new BadRequestException('The "' + instanceName + '" instance does not exist');
       }
 
+      this.logger.info(`Restarting instance: ${instanceName} (current state: ${state})`);
+
+      // Se a instância está fechada, apenas conecta
       if (state === 'close') {
-        throw new BadRequestException('The "' + instanceName + '" instance is not connected');
+        this.logger.info(`Instance ${instanceName} is closed, connecting...`);
+        return await this.connectToWhatsapp({ instanceName });
       }
-      this.logger.info(`Restarting instance: ${instanceName}`);
 
       if (typeof instance.restart === 'function') {
         await instance.restart();
